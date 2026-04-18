@@ -1,14 +1,42 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <natupnp.h>
 #include <comutil.h>
+#include <iostream>
+#include <ostream>
 #include <string>
+#include <thread>
+#include <windows.h>
+#include <limits>
 
 #pragma comment(lib,"ws2_32.lib")
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"oleaut32.lib")
 
-std::string
+
+std::string input(std::string promt) {
+    std::string value;
+    std::cout << promt;
+    std::getline(std::cin, value);
+    return value;
+
+}
+void print(std::string promt) {
+    std::cout << promt << std::endl;
+}
+
+std::string EncDec(std::string data,std::string key) {
+    std::string output = data;
+    for (int i = 0; i < data.size(); i++) {
+        output[i] = data[i] ^ key[i % key.length()];
+    }
+    return output;
+}
 
 
 std::string getLocalIP() {
@@ -61,7 +89,17 @@ bool openPortUPnP(int port) {
 
 void receiverThread(SOCKET s,std::string key) {
 
+    char buffer[4096];
+    while (true) {
+        int bytes = recv(s, buffer, sizeof(buffer) -1, 0);
+        if (bytes <= 0) break;
 
+        buffer[bytes] = '\0';
+
+        std::string decrypted = EncDec(std::string(buffer), key);
+
+        std::cout << "\n[ДРУГ]: " << decrypted << "\n" <<std::endl;
+    }
 
 }
 
@@ -69,7 +107,91 @@ void receiverThread(SOCKET s,std::string key) {
 
 int main () {
 
+    SetConsoleCP(65001);
+    SetConsoleOutputCP(65001);
 
 
+    // setlocale(LC_ALL, "Russian");
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+
+    std::cout << "--- P2P GHOST CHAT ---\n";
+
+    std::string roomKey = "my_secret_key";
+
+    std::cout << "1. Создать руму\n2. Присоединиться\nВыбор: ";
+
+    int mode; std::cin >> mode;
+
+    // std::cin.ignore((std::numeric_limits<std::streamsize>::max)(),'\n');
+
+    SOCKET s = socket(AF_INET,SOCK_STREAM,0);
+
+    int port;
+    std::cout << "Введите порт: "; std::cin >> port;
+
+    if (mode == 1) {
+
+        openPortUPnP(port);
+        print("[UPnP] Порт " + std::to_string(port) + " открыт!");
+
+        sockaddr_in addr = {AF_INET,htons(port),INADDR_ANY};
+
+        bind(s,(sockaddr*)&addr,sizeof(addr));
+
+        listen(s,1);
+
+        print("[ОЖИДАНИЕ] Ждем подключения...\n");
+
+        SOCKET client_socket = accept(s,NULL,NULL);
+
+        // if (client_socket == INVALID_SOCKET) {
+        //     print("[ОШИБКА] accept, код: "+ std::to_string(WSAGetLastError())+"\n");
+        //     return 1;
+        // }
+        // bind(s,(sockaddr*)&addr,sizeof(addr));
+        //
+        // listen(s,1);
+        //
+        // SOCKET client_socket = accept(s,NULL,NULL);
+        closesocket(s);
+        s = client_socket;
+        } else {
+            std::string targetIP;
+            std::cout << "Введите IP друга: "; std::cin >> targetIP;
+            sockaddr_in addr;
+
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(port);
+
+            inet_pton(AF_INET,targetIP.c_str(),&addr.sin_addr);
+            if (connect(s,(sockaddr*)&addr,sizeof(addr)) != 0) {
+                print("Ошибка подключения!");
+                return 1;
+            }
+        }
+        print("[УСПЕХ] Соединение установлено!\n");
+        std::thread(receiverThread,s,roomKey).detach();
+
+        std::string msg;
+        std::getline(std::cin,msg);
+
+        std::cin.ignore((std::numeric_limits<std::streamsize>::max)(),'\n');
+
+        while (true) {
+
+            std::cout << ">> " << std::flush;
+            if (!std::getline(std::cin,msg)) break;
+
+            if (msg.empty()) continue;
+
+            std::string encMsg = EncDec(msg,roomKey);
+
+            send(s,encMsg.c_str(),encMsg.length(),0);
+
+        }
+
+    WSACleanup();
+    return 0;
 
 }
